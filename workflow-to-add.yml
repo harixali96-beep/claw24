@@ -9,7 +9,7 @@ concurrency:
 permissions:
   contents: read
 env:
-  BUNDLE_URL: "https://base44.app/api/apps/6afc1d10013969ae13894a83/files/mp/public/6afc1d10013969ae13894a83/90df4d70d_claw24tar.gz"
+  BUNDLE_URL: "https://raw.githubusercontent.com/harixali96-beep/claw24/main/assets/claw24.tar.gz"
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -31,6 +31,7 @@ jobs:
           "$HOME/editor/venv/bin/pip" install -q --upgrade pip
           "$HOME/editor/venv/bin/pip" install -q faster-whisper yt-dlp
           test -f "$HOME/editor/engine.py" && test -f "$HOME/editor/tools/proedit.py"
+          echo "editor ready"
       - name: restore bot state
         uses: actions/cache/restore@v4
         with:
@@ -46,22 +47,27 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           python3 "$HOME/editor/setup_config.py" --claw "$HOME/claw" --editor "$HOME/editor"
-          python3 -c "import json,os;c=json.load(open(os.environ['HOME']+'/claw/state/openclaw.json'));print('primary',c['agents']['defaults']['model']['primary'],'tg',bool(c['channels']['telegram']['botToken']))"
+          python3 -c "import json,os;c=json.load(open(os.environ['HOME']+'/claw/state/openclaw.json'));print('primary',c['agents']['defaults']['model']['primary'],'| tg token set',bool(c['channels']['telegram']['botToken']))"
       - name: run bot
         env:
           OPENCLAW_STATE_DIR: /home/runner/claw/state
           OPENCLAW_CONFIG_PATH: /home/runner/claw/state/openclaw.json
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          openclaw gateway run &
-          GW=$!
-          sleep 25
-          openclaw gateway health || true
-          openclaw channels status | grep -i telegram || true
           END=$((SECONDS + 20200))
-          while [ $SECONDS -lt $END ] && kill -0 $GW 2>/dev/null; do sleep 30; done
-          kill $GW 2>/dev/null || true
-          sleep 3
+          for attempt in 1 2 3 4 5 6; do
+            echo "start attempt $attempt"
+            openclaw gateway run &
+            GW=$!
+            sleep 30
+            openclaw gateway health || true
+            openclaw channels status | grep -i telegram || true
+            while [ $SECONDS -lt $END ] && kill -0 $GW 2>/dev/null; do sleep 30; done
+            kill $GW 2>/dev/null || true
+            sleep 3
+            if [ $SECONDS -ge $END ]; then break; fi
+            echo "gateway exited early, restarting"
+          done
       - name: save bot state
         if: always()
         uses: actions/cache/save@v4
