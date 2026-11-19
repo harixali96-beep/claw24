@@ -1,0 +1,78 @@
+name: bot
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+concurrency:
+  group: bot
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  BUNDLE_URL: "https://raw.githubusercontent.com/harixali96-beep/claw24/main/assets/claw24.tar.gz"
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg python3-venv
+          npm install -g openclaw@2026.11.5 --silent
+          node -v && openclaw --version
+      - name: editor bundle
+        run: |
+          curl -fsSL "$BUNDLE_URL" -o /tmp/bundle.tgz
+          mkdir -p /tmp/unpack
+          tar -xzf /tmp/bundle.tgz -C /tmp/unpack
+          mv /tmp/unpack/claw24/editor "$HOME/editor"
+          python3 -m venv "$HOME/editor/venv"
+          "$HOME/editor/venv/bin/pip" install -q --upgrade pip
+          "$HOME/editor/venv/bin/pip" install -q faster-whisper yt-dlp
+          test -f "$HOME/editor/engine.py" && test -f "$HOME/editor/tools/proedit.py"
+          echo "editor ready"
+      - name: restore bot state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /home/runner/claw/state
+            /home/runner/.cache/huggingface
+          key: clawstate-${{ github.run_id }}
+          restore-keys: |
+            clawstate-
+      - name: config
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          python3 "$HOME/editor/setup_config.py" --claw "$HOME/claw" --editor "$HOME/editor"
+          python3 -c "import json,os;c=json.load(open(os.environ['HOME']+'/claw/state/openclaw.json'));print('primary',c['agents']['defaults']['model']['primary'],'| tg token set',bool(c['channels']['telegram']['botToken']))"
+      - name: run bot
+        env:
+          OPENCLAW_STATE_DIR: /home/runner/claw/state
+          OPENCLAW_CONFIG_PATH: /home/runner/claw/state/openclaw.json
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          END=$((SECONDS + 20200))
+          for attempt in 1 2 3 4 5 6; do
+            echo "start attempt $attempt"
+            openclaw gateway run &
+            GW=$!
+            sleep 30
+            openclaw gateway health || true
+            openclaw channels status | grep -i telegram || true
+            while [ $SECONDS -lt $END ] && kill -0 $GW 2>/dev/null; do sleep 30; done
+            kill $GW 2>/dev/null || true
+            sleep 3
+            if [ $SECONDS -ge $END ]; then break; fi
+            echo "gateway exited early, restarting"
+          done
+      - name: save bot state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /home/runner/claw/state
+            /home/runner/.cache/huggingface
+          key: clawstate-${{ github.run_id }}
